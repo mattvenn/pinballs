@@ -1,15 +1,70 @@
+""""
+looks up historical sell prices from pinpedia.com
+"""
+
 import arrow
+import sys
 import numpy as np
 import csv
 import time
 import glob
+
+from datetime import datetime
 from currencies import currencies
 from mechanize import Browser
 from BeautifulSoup import BeautifulSoup
 import re
 
+html_dir = 'html'
+csv_dir = 'csv'
+
+def parse_page(html):
+    soup = BeautifulSoup(html)
+    headers = soup.findAll("h4")
+
+    #import ipdb; ipdb.set_trace()
+    machines = []
+    for header in headers:
+        aref = header.findChildren()[1]
+        url = aref.attrs[0][1]
+        machine = url.replace('http://www.pinpedia.com/machine/','')
+        machines.append(machine)
+    return machines
+
+def get_machines(num_pages):
+    mech = Browser()
+    mech.set_handle_robots(False)
+    mech.set_handle_equiv(False) 
+    mech.addheaders = [('User-agent', 'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9.0.1) Gecko/2008071615 Fedora/3.0.1-1.fc9 Firefox/3.0.1')]
+
+    machines = []
+    try:
+        page_num = 0
+        for page_num in range(1,num_pages+1):
+            print("page %d" % (page_num))
+            url = "http://www.pinpedia.com/machine?page=%d" % page_num
+            html_page = mech.open(url)
+            html = html_page.read()
+            machines += parse_page(html)
+            time.sleep(0.5)
+    except Exception as e:
+        print e
+        print("finished at page %s" % page_num)
+    with open('machines.txt','w') as fh:
+        for machine in machines:
+            fh.write(machine + "\n")
+    return machines
+
+def parse(name):
+    files = glob.glob("%s/%s*html" % (html_dir,name))
+    parsed_rows = []
+    for file in files:
+        with open(file) as fh:
+            print("parsing %s" % file)
+            html = fh.read()
+
 #fetchs all available pages and saves them as html files
-def fetch(name='Doctor-Who'):
+def fetch(name):
     mech = Browser()
     mech.set_handle_robots(False)
     mech.set_handle_equiv(False) 
@@ -22,14 +77,14 @@ def fetch(name='Doctor-Who'):
             url = "http://www.pinpedia.com/machine/%s/prices?page=%d" % (name,page_num)
             html_page = mech.open(url)
             html = html_page.read()
-            with open('%s-%s.html' % (name,page_num),'w') as fh:
+            with open('%s/%s-%s.html' % (html_dir,name,page_num),'w') as fh:
                 fh.write(html)
             time.sleep(1)
     except Exception:
         print("finished at page %s" % page_num)
 
-def parse(name='Doctor-Who'):
-    files = glob.glob(name + '*html')
+def parse(name):
+    files = glob.glob("%s/%s*html" % (html_dir,name))
     parsed_rows = []
     for file in files:
         with open(file) as fh:
@@ -47,7 +102,7 @@ def parse(name='Doctor-Who'):
     parsed_rows = sorted(parsed_rows, key=lambda x: datetime.strptime(x[1],'%Y-%m-%d'))
 
     print("writing")
-    with open(name + '.csv', 'w') as csvfile:
+    with open("%s/%s.csv" % (csv_dir,name), 'w') as csvfile:
         pin_csv = csv.writer(csvfile)
         for row in parsed_rows:
             pin_csv.writerow(row)
@@ -57,9 +112,9 @@ def parse_row(row):
     cols = row.findAll('td')
     currency,cost = cols[0].getText().split(' ')
     raw_date = cols[2].getText()
+    #TODO get rid of arrow
     date = arrow.get(raw_date, 'DD MMMM, YYYY')
 
-#    import ipdb; ipdb.set_trace()
     cost=''.join(i for i in cost if i.isdigit())
     cost = int(cost)
     return (currencies[currency]*cost,date.format('YYYY-MM-DD'))
@@ -84,26 +139,33 @@ def moving_average(x, n, type='simple'):
     a[:n] = a[n]
     return a
 
-def plot(name):
+def plot(name=None):
     import matplotlib.pyplot as plt
     from matplotlib.dates import YearLocator, MonthLocator, DateFormatter
     years    = YearLocator()   # every year
     months   = MonthLocator()  # every month
     yearsFmt = DateFormatter('%Y')
 
-    dates = []
-    prices = []
-    from datetime import datetime
-    with open(name + '.csv') as csvfile:
-        pin_csv = csv.reader(csvfile)
-        for row in pin_csv:
-            dates.append(datetime.strptime(row[1],'%Y-%m-%d'))
-            prices.append(float(row[0]))
-
-    prices = moving_average(prices,20) 
-
     fig, ax = plt.subplots()
-    ax.plot_date(dates, prices, '-')
+
+
+    files = glob.glob("%s/*csv" % (csv_dir))
+    if name:
+        files = ["%s/%s.csv" % (csv_dir,name)]
+
+    for file in files[10:20]:
+        dates = []
+        prices = []
+        print("plotting %s" % file)
+        with open(file) as csvfile:
+            pin_csv = csv.reader(csvfile)
+            for row in pin_csv:
+                dates.append(datetime.strptime(row[1],'%Y-%m-%d'))
+                prices.append(float(row[0]))
+
+        prices = moving_average(prices,20) 
+
+        ax.plot_date(dates, prices, '-', label=file)
 
     # format the ticks
     ax.xaxis.set_major_formatter(yearsFmt)
@@ -114,14 +176,29 @@ def plot(name):
     ax.fmt_xdata = DateFormatter('%Y-%m-%d')
     ax.grid(True)
     fig.autofmt_xdate()
+    plt.legend(loc='upper left')
     plt.show()
 
 
 #name = 'Twilight-Zone'
 #name = 'Doctor-Who'
-name = 'Attack-from-Mars'
-fetch(name)
-parse(name)
-plot(name)
+"""
+if len(sys.argv) == 2:
+    name = sys.argv[1]
+else:
+    name = None
+"""
+
+#machines = get_machines(2)
+"""
+with open("machines.txt") as fh:
+    machines = fh.readlines()
+for machine in machines:
+    machine = machine.strip()
+    print("working on %s" % machine)
+"""
+#    fetch(machine)
+#    parse(machine)
+plot()
 
 
