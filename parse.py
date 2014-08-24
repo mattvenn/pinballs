@@ -4,6 +4,7 @@
 looks up historical sell prices from pinpedia.com
 """
 
+import argparse
 import arrow
 import sys
 import numpy as np
@@ -11,6 +12,8 @@ import csv
 import time
 import glob
 
+import matplotlib.pyplot as plt
+from matplotlib.dates import YearLocator, MonthLocator, DateFormatter
 from datetime import datetime
 from currencies import currencies
 from mechanize import Browser
@@ -52,10 +55,12 @@ def get_machines(start,num_pages):
     except Exception as e:
         print e
         print("finished at page %s" % page_num)
+
+    print("storing machines to machines.txt")
+
     with open('machines.txt','w') as fh:
         for machine in machines:
             fh.write(machine + "\n")
-    return machines
 
 def parse(name):
     files = glob.glob("%s/%s-*html" % (html_dir,name))
@@ -77,6 +82,7 @@ def fetch(name):
         for page_num in range(100):
             print("page %d for %s" % (page_num,name))
             url = "http://www.pinpedia.com/machine/%s/prices?page=%d" % (name,page_num)
+            print url
             html_page = mech.open(url)
             html = html_page.read()
             with open('%s/%s-%s.html' % (html_dir,name,page_num),'w') as fh:
@@ -86,6 +92,7 @@ def fetch(name):
         print("finished at page %s" % page_num)
 
 def parse(name):
+    print("parsing %s" % name)
     files = glob.glob("%s/%s-*html" % (html_dir,name))
     parsed_rows = []
     for file in files:
@@ -124,9 +131,7 @@ def parse_row(row):
 def moving_average(x, n, type='simple'):
     """
     compute an n period moving average.
-
     type is 'simple' | 'exponential'
-
     """
     x = np.asarray(x)
     if type=='simple':
@@ -141,19 +146,18 @@ def moving_average(x, n, type='simple'):
     a[:n] = a[n]
     return a
 
+#plots a machine or number of machines on a graph, OR
+#sums all prices and averages them, plots as a single line on a graph
 def plot(name=None):
-    import matplotlib.pyplot as plt
-    from matplotlib.dates import YearLocator, MonthLocator, DateFormatter
     years    = YearLocator()   # every year
     months   = MonthLocator()  # every month
     yearsFmt = DateFormatter('%Y')
 
     fig, ax = plt.subplots()
 
-
     files = glob.glob("%s/*csv" % (csv_dir))
     if name:
-        files = ["%s/%s.csv" % (csv_dir,name)]
+        files = ["%s/%s.csv" % (csv_dir,n) for n in name]
     sum_dates = {}
 
     for file in files:
@@ -164,29 +168,39 @@ def plot(name=None):
             pin_csv = csv.reader(csvfile)
             for row in pin_csv:
                 date = datetime.strptime(row[1],'%Y-%m-%d')
+                #skip dates before the start date
+                if int(datetime.strftime(date,'%Y')) < args.first_date:
+                    continue
                 dates.append(date)
                 date_key = datetime.strftime(date,'%Y-%m')
                 price = float(row[0])
+
+                #prepare averaging stuff
                 if sum_dates.has_key(date_key):
                     sum_dates[date_key].append(price)
                 else:
                     sum_dates[date_key] = [price]
+
                 prices.append(price)
 
-        prices = moving_average(prices,20) 
+        #do a moving average
+        prices = moving_average(prices,args.average) 
 
-#        ax.plot_date(dates, prices, '-', label=file)
+        #plot the graph unless we're doing an average of all machines
+        if not args.plot_average:
+            ax.plot_date(dates, prices, '-', label=file)
 
 
-    date_list = []
-    sum_prices = []
-    #work out sums
-    for date in sorted(sum_dates.keys()):
-        num = len(sum_dates[date])
-        date_list.append(datetime.strptime(date,'%Y-%m'))
-        sum_prices.append(sum(sum_dates[date]) / num)
+    if args.plot_average:
+        date_list = []
+        sum_prices = []
+        #work out sums
+        for date in sorted(sum_dates.keys()):
+            num = len(sum_dates[date])
+            date_list.append(datetime.strptime(date,'%Y-%m'))
+            sum_prices.append(sum(sum_dates[date]) / num)
 
-    ax.plot_date(date_list, sum_prices, '-')
+        ax.plot_date(date_list, sum_prices, '-')
 
     # format the ticks
     ax.xaxis.set_major_formatter(yearsFmt)
@@ -197,26 +211,52 @@ def plot(name=None):
     ax.fmt_xdata = DateFormatter('%Y-%m-%d')
     ax.grid(True)
     fig.autofmt_xdate()
-    plt.legend(loc='upper left')
+    if len(files) < 10:
+        plt.legend(loc='upper left')
     plt.show()
 
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="fetch and parse pinball price data from pinpedia.com")
 
-"""
-if len(sys.argv) == 2:
-    name = sys.argv[1]
-else:
-    name = None
-"""
+    parser.add_argument('--fetch-machine-list', action='store_true', help="fetch 100 first machines, save to machines.csv")
+    parser.add_argument('--plot-average', action='store_true', help="plot average prices per month of all machine data")
+    parser.add_argument('--plot-all', action='store_true', help="plot all machine prices on same graph")
+    parser.add_argument('--fetch-all-data', action='store_true', help="fetch all data for machines stored in machines.csv")
+    parser.add_argument('--fetch-data', action='store_true', help="fetch data for specific machine")
 
-#machines = get_machines(1,12)
-"""
-with open("machines.txt") as fh:
-    machines = fh.readlines()
-for machine in machines[85:100]:
-    machine = machine.strip()
-    print("working on %s" % machine)
-    fetch(machine)
-    parse(machine)
-"""
-plot()
+    parser.add_argument('--machine', help="machine name", nargs='+')
+    parser.add_argument('--plot', action='store_true', help="plot a machine's history")
+    parser.add_argument('--first-date', action='store', type=int, help="ignore history before this date", default=2008)
+    parser.add_argument('--average', action='store', type=int, help="averaging window", default=20)
 
+    args = parser.parse_args()
+
+    if args.fetch_machine_list:
+        get_machines(1,10)
+
+    #check we have machine arg if needed
+    if args.fetch_data or args.plot:
+        if not args.machine:
+            parser.error('need to specify machine')
+    
+    if args.plot:
+        plot(args.machine)
+
+    if args.plot_average:
+        plot()
+
+    if args.plot_all:
+        plot()
+
+    if args.fetch_data:
+        for machine in args.machine:
+            fetch(machine)
+            parse(machine)
+
+    if args.fetch_all_data:
+        with open("machines.txt") as fh:
+            machine = fh.readline()
+            machine = machine.strip()
+            print("fetching %s" % machine)
+            fetch(machine)
+            parse(machine)
