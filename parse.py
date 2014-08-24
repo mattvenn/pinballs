@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 """"
 looks up historical sell prices from pinpedia.com
 """
@@ -31,7 +33,7 @@ def parse_page(html):
         machines.append(machine)
     return machines
 
-def get_machines(num_pages):
+def get_machines(start,num_pages):
     mech = Browser()
     mech.set_handle_robots(False)
     mech.set_handle_equiv(False) 
@@ -40,13 +42,13 @@ def get_machines(num_pages):
     machines = []
     try:
         page_num = 0
-        for page_num in range(1,num_pages+1):
+        for page_num in range(start,num_pages+1):
             print("page %d" % (page_num))
             url = "http://www.pinpedia.com/machine?page=%d" % page_num
             html_page = mech.open(url)
             html = html_page.read()
             machines += parse_page(html)
-            time.sleep(0.5)
+            time.sleep(0.1)
     except Exception as e:
         print e
         print("finished at page %s" % page_num)
@@ -56,7 +58,7 @@ def get_machines(num_pages):
     return machines
 
 def parse(name):
-    files = glob.glob("%s/%s*html" % (html_dir,name))
+    files = glob.glob("%s/%s-*html" % (html_dir,name))
     parsed_rows = []
     for file in files:
         with open(file) as fh:
@@ -79,12 +81,12 @@ def fetch(name):
             html = html_page.read()
             with open('%s/%s-%s.html' % (html_dir,name,page_num),'w') as fh:
                 fh.write(html)
-            time.sleep(1)
+            time.sleep(0.5)
     except Exception:
         print("finished at page %s" % page_num)
 
 def parse(name):
-    files = glob.glob("%s/%s*html" % (html_dir,name))
+    files = glob.glob("%s/%s-*html" % (html_dir,name))
     parsed_rows = []
     for file in files:
         with open(file) as fh:
@@ -152,20 +154,39 @@ def plot(name=None):
     files = glob.glob("%s/*csv" % (csv_dir))
     if name:
         files = ["%s/%s.csv" % (csv_dir,name)]
+    sum_dates = {}
 
-    for file in files[10:20]:
+    for file in files:
         dates = []
         prices = []
         print("plotting %s" % file)
         with open(file) as csvfile:
             pin_csv = csv.reader(csvfile)
             for row in pin_csv:
-                dates.append(datetime.strptime(row[1],'%Y-%m-%d'))
-                prices.append(float(row[0]))
+                date = datetime.strptime(row[1],'%Y-%m-%d')
+                dates.append(date)
+                date_key = datetime.strftime(date,'%Y-%m')
+                price = float(row[0])
+                if sum_dates.has_key(date_key):
+                    sum_dates[date_key].append(price)
+                else:
+                    sum_dates[date_key] = [price]
+                prices.append(price)
 
         prices = moving_average(prices,20) 
 
-        ax.plot_date(dates, prices, '-', label=file)
+#        ax.plot_date(dates, prices, '-', label=file)
+
+
+    date_list = []
+    sum_prices = []
+    #work out sums
+    for date in sorted(sum_dates.keys()):
+        num = len(sum_dates[date])
+        date_list.append(datetime.strptime(date,'%Y-%m'))
+        sum_prices.append(sum(sum_dates[date]) / num)
+
+    ax.plot_date(date_list, sum_prices, '-')
 
     # format the ticks
     ax.xaxis.set_major_formatter(yearsFmt)
@@ -180,8 +201,6 @@ def plot(name=None):
     plt.show()
 
 
-#name = 'Twilight-Zone'
-#name = 'Doctor-Who'
 """
 if len(sys.argv) == 2:
     name = sys.argv[1]
@@ -189,16 +208,15 @@ else:
     name = None
 """
 
-#machines = get_machines(2)
+#machines = get_machines(1,12)
 """
 with open("machines.txt") as fh:
     machines = fh.readlines()
-for machine in machines:
+for machine in machines[85:100]:
     machine = machine.strip()
     print("working on %s" % machine)
+    fetch(machine)
+    parse(machine)
 """
-#    fetch(machine)
-#    parse(machine)
 plot()
-
 
